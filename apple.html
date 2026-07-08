@@ -216,10 +216,6 @@ async function initCheckout() {
       buttonColor: "black"
     };
 
-    if (config.applePayDomainName) {
-      applePayConfiguration.domainName = config.applePayDomainName;
-    }
-
     const checkout = await AdyenCheckout({
       session,
       environment: config.environment,
