@@ -1,4 +1,4 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import mimetypes
 import os
@@ -252,7 +252,7 @@ def run():
             f"Crie {HTTPS_CERT_FILE} e {HTTPS_KEY_FILE} ou configure HTTPS_CERT_FILE/HTTPS_KEY_FILE."
         )
 
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
 
     scheme = "http"
     if LOCAL_HTTPS:
