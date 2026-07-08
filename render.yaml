@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: adyen-apple-pay-test
+    runtime: python
+    plan: free
+    buildCommand: "python3 --version"
+    startCommand: "python3 apple-server.py"
+    healthCheckPath: /health
+    envVars:
+      - key: LOCAL_HTTPS
+        value: "false"
+      - key: ADYEN_MERCHANT_ACCOUNT
+        value: ENJOEIBR
+      - key: ADYEN_AMOUNT_CURRENCY
+        value: BRL
+      - key: ADYEN_AMOUNT_VALUE
+        value: "10000"
+      - key: ADYEN_COUNTRY_CODE
+        value: BR
+      - key: ADYEN_SHOPPER_LOCALE
+        value: pt-BR
+      - key: ADYEN_API_KEY
+        sync: false
+      - key: ADYEN_CLIENT_KEY
+        sync: false
+      - key: ADYEN_APPLE_PAY_DOMAIN_NAME
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Apple Pay + Adyen Drop-in TEST</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link
+    rel="stylesheet"
+    href="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/6.10.0/adyen.css">
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 720px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f5f5f5;
+      color: #222;
+    }
+
+    h1 {
+      margin: 0 0 24px;
+      color: #222;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    #dropin-container {
+      margin-bottom: 20px;
+    }
+
+    pre {
+      background: #fff;
+      border: 1px solid #ddd;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 12px;
+      max-height: 420px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status {
+      padding: 12px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      display: none;
+    }
+
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      display: block;
+    }
+
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      display: block;
+    }
+
+    .status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Apple Pay + Adyen Drop-in</h1>
+
+<div id="status" class="status"></div>
+<div id="dropin-container"></div>
+
+<h3>Resposta da API:</h3>
+<pre id="result">Inicializando...</pre>
+
+<script src="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/6.10.0/adyen.js"></script>
+<script>
+const API_BASE_URL = window.location.origin;
+
+function showStatus(message, type = "info") {
+  const el = document.getElementById("status");
+  el.textContent = message;
+  el.className = `status ${type}`;
+}
+
+function log(data, title = "") {
+  const prefix = title ? `${title}\n\n` : "";
+  const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+  document.getElementById("result").textContent = prefix + text;
+  console.log(title || "LOG:", data);
+}
+
+function adyenErrorMessage(error) {
+  const rawMessage = error?.message || error?.error || "";
+
+  if (rawMessage.includes("ApplePayService")) {
+    return [
+      "Falha na validacao do Apple Pay.",
+      "Confirme se este dominio HTTPS esta validado na Adyen/Apple,",
+      "se ADYEN_APPLE_PAY_DOMAIN_NAME esta correto e se o arquivo de associacao esta publicado."
+    ].join(" ");
+  }
+
+  if (rawMessage.includes("domainName must be a fully qualified domain name")) {
+    return "Apple Pay precisa de um dominio HTTPS real em ADYEN_APPLE_PAY_DOMAIN_NAME.";
+  }
+
+  if (error?.name === "NETWORK_ERROR") {
+    return [
+      "Erro de rede ao chamar a Adyen.",
+      `Adicione ${window.location.origin} em Allowed origins da API credential desse clientKey.`,
+      "Depois salve na Adyen e recarregue esta pagina."
+    ].join(" ");
+  }
+
+  return error?.error || error?.message || "Erro ao inicializar";
+}
+
+async function createSession() {
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: { currency: "BRL", value: 10000 },
+        countryCode: "BR",
+        shopperLocale: "pt-BR",
+        reference: `APPLEPAY-DROPIN-${Date.now()}`,
+        returnUrl: `${API_BASE_URL}/return`
+      })
+    });
+  } catch (error) {
+    throw {
+      error: "Nao consegui chamar o servidor.",
+      detail: error.message,
+      hint: `Confira se o Web Service esta ativo em ${API_BASE_URL}.`
+    };
+  }
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw payload;
+  }
+
+  return payload;
+}
+
+async function initCheckout() {
+  if (window.location.protocol === "file:") {
+    showStatus("Abra a pagina pela URL do servidor", "error");
+    log("Nao abra o apple.html direto como arquivo. Use a URL HTTPS do Render.");
+    return;
+  }
+
+  if (!window.isSecureContext) {
+    showStatus("Apple Pay exige HTTPS", "error");
+    log(`Abra esta pagina por HTTPS.\nURL atual: ${window.location.href}`);
+    return;
+  }
+
+  try {
+    showStatus("Criando sessao Adyen...", "info");
+
+    const { AdyenCheckout, Dropin } = window.AdyenWeb;
+    const { session, config, adyenResponse } = await createSession();
+
+    if (!config.clientKey) {
+      throw { error: "ADYEN_CLIENT_KEY nao configurado no servidor." };
+    }
+
+    log({ session, config, adyenResponse }, "Sessao criada");
+
+    if (!config.applePayDomainName || !config.applePayDomainAssociationFilePresent) {
+      showStatus(
+        "Apple Pay carregou, mas o clique pode falhar sem dominio validado.",
+        "info"
+      );
+      log({
+        origin: window.location.origin,
+        applePayDomainName: config.applePayDomainName || null,
+        applePayDomainAssociationFilePresent: config.applePayDomainAssociationFilePresent,
+        nextSteps: [
+          "Configure ADYEN_APPLE_PAY_DOMAIN_NAME com o dominio onrender.com sem https://.",
+          "Configure PUBLIC_BASE_URL com a URL HTTPS completa do Render.",
+          "Coloque o arquivo apple-developer-merchantid-domain-association na raiz do projeto.",
+          "Cadastre o dominio na Adyen e em Allowed origins."
+        ]
+      }, "Aviso Apple Pay");
+    }
+
+    const applePayConfiguration = {
+      buttonType: "buy",
+      buttonColor: "black"
+    };
+
+    if (config.applePayDomainName) {
+      applePayConfiguration.domainName = config.applePayDomainName;
+    }
+
+    const checkout = await AdyenCheckout({
+      session,
+      environment: config.environment,
+      clientKey: config.clientKey,
+      amount: config.amount,
+      countryCode: config.countryCode,
+      locale: config.locale,
+
+      onPaymentCompleted: (result, component) => {
+        showStatus(`Pagamento concluido: ${result.resultCode}`, "success");
+        log({ result, componentType: component?.type }, "Pagamento concluido");
+      },
+
+      onPaymentFailed: (result, component) => {
+        showStatus(`Pagamento falhou: ${result.resultCode}`, "error");
+        log({ result, componentType: component?.type }, "Pagamento falhou");
+      },
+
+      onError: (error, component) => {
+        showStatus(adyenErrorMessage(error), "error");
+        log({
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          componentType: component?.type
+        }, "Erro Drop-in");
+      }
+    });
+
+    new Dropin(checkout, {
+      instantPaymentTypes: ["applepay"],
+      openFirstPaymentMethod: true,
+      paymentMethodsConfiguration: {
+        applepay: applePayConfiguration
+      }
+    }).mount("#dropin-container");
+
+    showStatus("Drop-in carregado", "success");
+
+  } catch (error) {
+    showStatus(adyenErrorMessage(error), "error");
+    log(error, "Erro inicializacao");
+  }
+}
+
+window.addEventListener("DOMContentLoaded", initCheckout);
+</script>
+
+</body>
+</html>
