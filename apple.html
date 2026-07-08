@@ -145,7 +145,21 @@ async function createSession() {
     };
   }
 
-  const payload = await response.json();
+  const responseText = await response.text();
+  let payload;
+
+  try {
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch (error) {
+    throw {
+      error: "O servidor respondeu em um formato inesperado.",
+      status: response.status,
+      statusText: response.statusText,
+      contentType: response.headers.get("content-type"),
+      body: responseText,
+      hint: "Se o body for 'Not Found', aguarde o Render acordar ou confira se o deploy terminou."
+    };
+  }
 
   if (!response.ok) {
     throw payload;
