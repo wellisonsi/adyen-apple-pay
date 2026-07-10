@@ -1,4 +1,5 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import base64
 import json
 import mimetypes
 import os
@@ -7,13 +8,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APPLE_PAY_DOMAIN_ASSOCIATION_FILE = "apple-developer-merchantid-domain-association"
 
 ADYEN_API_KEY = os.getenv("ADYEN_API_KEY", "")
-ADYEN_CLIENT_KEY = os.getenv("ADYEN_CLIENT_KEY", "")
 MERCHANT_ACCOUNT = os.getenv("ADYEN_MERCHANT_ACCOUNT", "ENJOEIBR")
 
 AMOUNT_CURRENCY = os.getenv("ADYEN_AMOUNT_CURRENCY", "BRL")
@@ -114,8 +115,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = self._read_json()
 
-            if self.path == "/sessions":
-                self._create_session(data)
+            if self.path == "/paymentMethods":
+                self._payment_methods(data)
+                return
+
+            if self.path == "/apple-pay-session":
+                self._apple_pay_session(data)
+                return
+
+            if self.path == "/payments":
+                self._payments(data)
                 return
 
             self._json(404, {"error": "Not found"})
@@ -163,7 +172,6 @@ class Handler(BaseHTTPRequestHandler):
     def _checkout_config(self):
         return {
             "environment": "test",
-            "clientKey": ADYEN_CLIENT_KEY,
             "applePayDomainName": clean_domain_name(APPLE_PAY_DOMAIN_NAME),
             "applePayDomainAssociationFilePresent": os.path.exists(
                 file_path(APPLE_PAY_DOMAIN_ASSOCIATION_FILE)
@@ -176,27 +184,73 @@ class Handler(BaseHTTPRequestHandler):
             "locale": SHOPPER_LOCALE,
         }
 
-    def _create_session(self, data):
+    def _adyen_request(self, version, path, payload, idempotency_key=None):
         if not ADYEN_API_KEY:
-            self._json(
-                500,
-                {
-                    "error": "ADYEN_API_KEY is required.",
-                    "hint": "Set ADYEN_API_KEY in Render environment variables.",
-                },
-            )
-            return
+            raise RuntimeError("ADYEN_API_KEY is required.")
 
-        if not ADYEN_CLIENT_KEY:
-            self._json(
-                500,
-                {
-                    "error": "ADYEN_CLIENT_KEY is required for Adyen Web Drop-in.",
-                    "hint": "Set ADYEN_CLIENT_KEY in Render environment variables.",
-                },
-            )
-            return
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": ADYEN_API_KEY,
+        }
 
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
+        request = urllib.request.Request(
+            f"https://checkout-test.adyen.com/{version}{path}",
+            data=json_bytes(payload),
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _payment_methods(self, data):
+        payload = {
+            "merchantAccount": MERCHANT_ACCOUNT,
+            "amount": data.get("amount")
+            or {
+                "currency": AMOUNT_CURRENCY,
+                "value": AMOUNT_VALUE,
+            },
+            "countryCode": data.get("countryCode", COUNTRY_CODE),
+            "channel": "Web",
+        }
+
+        payment_methods = self._adyen_request("v72", "/paymentMethods", payload)
+
+        self._json(
+            200,
+            {
+                "config": self._checkout_config(),
+                "adyenResponse": payment_methods,
+            },
+        )
+
+    def _apple_pay_session(self, data):
+        payload = {
+            "displayName": data["displayName"],
+            "domainName": data.get("domainName")
+            or clean_domain_name(APPLE_PAY_DOMAIN_NAME),
+            "merchantIdentifier": data["merchantIdentifier"],
+        }
+
+        adyen_response = self._adyen_request("v64", "/applePay/sessions", payload)
+        decoded_session = json.loads(
+            base64.b64decode(adyen_response["data"]).decode("utf-8")
+        )
+
+        self._json(
+            200,
+            {
+                "applePaySession": decoded_session,
+                "config": self._checkout_config(),
+                "adyenResponse": adyen_response,
+            },
+        )
+
+    def _payments(self, data):
         amount = data.get("amount") or {
             "currency": AMOUNT_CURRENCY,
             "value": AMOUNT_VALUE,
@@ -204,40 +258,27 @@ class Handler(BaseHTTPRequestHandler):
 
         payload = {
             "merchantAccount": MERCHANT_ACCOUNT,
+            "reference": data.get("reference", f"APPLEPAY-API-{int(time.time())}"),
             "amount": amount,
-            "reference": data.get("reference", f"APPLEPAY-DROPIN-{int(time.time())}"),
+            "paymentMethod": {
+                "type": "applepay",
+                "applePayToken": data["applePayToken"],
+            },
             "returnUrl": data.get("returnUrl") or f"{public_base_url()}/return",
-            "countryCode": data.get("countryCode", COUNTRY_CODE),
-            "channel": "Web",
-            "shopperLocale": data.get("shopperLocale", SHOPPER_LOCALE),
-            "allowedPaymentMethods": ["applepay"],
         }
 
-        request = urllib.request.Request(
-            "https://checkout-test.adyen.com/v71/sessions",
-            data=json_bytes(payload),
-            headers={
-                "Content-Type": "application/json",
-                "X-API-Key": ADYEN_API_KEY,
-            },
-            method="POST",
+        payment = self._adyen_request(
+            "v72",
+            "/payments",
+            payload,
+            idempotency_key=data.get("idempotencyKey") or str(uuid.uuid4()),
         )
-
-        with urllib.request.urlopen(request) as response:
-            session = json.loads(response.read().decode("utf-8"))
-
-        print("SESSAO ADYEN:")
-        print(json.dumps(session, indent=2))
 
         self._json(
             200,
             {
-                "session": {
-                    "id": session["id"],
-                    "sessionData": session["sessionData"],
-                },
+                "payment": payment,
                 "config": self._checkout_config(),
-                "adyenResponse": session,
             },
         )
 
@@ -262,7 +303,7 @@ def run():
         server.socket = context.wrap_socket(server.socket, server_side=True)
         scheme = "https"
 
-    print(f"Apple Pay Adyen Drop-in server: {scheme}://0.0.0.0:{PORT}")
+    print(f"Apple Pay API-only server: {scheme}://0.0.0.0:{PORT}")
     server.serve_forever()
 
 

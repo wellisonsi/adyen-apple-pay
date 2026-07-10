@@ -2,11 +2,8 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <title>Apple Pay + Adyen Drop-in TEST</title>
+  <title>Apple Pay + Adyen API-only TEST</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link
-    rel="stylesheet"
-    href="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/6.10.0/adyen.css">
   <style>
     * { box-sizing: border-box; }
 
@@ -26,8 +23,16 @@
       line-height: 1.2;
     }
 
-    #dropin-container {
+    #apple-pay-button {
+      -webkit-appearance: -apple-pay-button;
+      -apple-pay-button-type: buy;
+      -apple-pay-button-style: black;
+      display: none;
+      width: 240px;
+      height: 44px;
+      border-radius: 6px;
       margin-bottom: 20px;
+      cursor: pointer;
     }
 
     pre {
@@ -71,17 +76,19 @@
 </head>
 <body>
 
-<h1>Apple Pay + Adyen Drop-in</h1>
+<h1>Apple Pay + Adyen API-only</h1>
 
 <div id="status" class="status"></div>
-<div id="dropin-container"></div>
+<div id="apple-pay-button" role="button" aria-label="Comprar com Apple Pay"></div>
 
 <h3>Resposta da API:</h3>
 <pre id="result">Inicializando...</pre>
 
-<script src="https://checkoutshopper-test.adyen.com/checkoutshopper/sdk/6.10.0/adyen.js"></script>
 <script>
 const API_BASE_URL = window.location.origin;
+
+let checkoutConfig = null;
+let applePayPaymentMethod = null;
 
 function showStatus(message, type = "info") {
   const el = document.getElementById("status");
@@ -96,54 +103,12 @@ function log(data, title = "") {
   console.log(title || "LOG:", data);
 }
 
-function adyenErrorMessage(error) {
-  const rawMessage = error?.message || error?.error || "";
-
-  if (rawMessage.includes("ApplePayService")) {
-    return [
-      "Falha na validacao do Apple Pay.",
-      "Confirme se este dominio HTTPS esta validado na Adyen/Apple,",
-      "se ADYEN_APPLE_PAY_DOMAIN_NAME esta correto e se o arquivo de associacao esta publicado."
-    ].join(" ");
-  }
-
-  if (rawMessage.includes("domainName must be a fully qualified domain name")) {
-    return "Apple Pay precisa de um dominio HTTPS real em ADYEN_APPLE_PAY_DOMAIN_NAME.";
-  }
-
-  if (error?.name === "NETWORK_ERROR") {
-    return [
-      "Erro de rede ao chamar a Adyen.",
-      `Adicione ${window.location.origin} em Allowed origins da API credential desse clientKey.`,
-      "Depois salve na Adyen e recarregue esta pagina."
-    ].join(" ");
-  }
-
-  return error?.error || error?.message || "Erro ao inicializar";
-}
-
-async function createSession() {
-  let response;
-
-  try {
-    response = await fetch(`${API_BASE_URL}/sessions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        amount: { currency: "BRL", value: 10000 },
-        countryCode: "BR",
-        shopperLocale: "pt-BR",
-        reference: `APPLEPAY-DROPIN-${Date.now()}`,
-        returnUrl: `${API_BASE_URL}/return`
-      })
-    });
-  } catch (error) {
-    throw {
-      error: "Nao consegui chamar o servidor.",
-      detail: error.message,
-      hint: `Confira se o Web Service esta ativo em ${API_BASE_URL}.`
-    };
-  }
+async function api(path, body) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
 
   const responseText = await response.text();
   let payload;
@@ -156,8 +121,7 @@ async function createSession() {
       status: response.status,
       statusText: response.statusText,
       contentType: response.headers.get("content-type"),
-      body: responseText,
-      hint: "Se o body for 'Not Found', aguarde o Render acordar ou confira se o deploy terminou."
+      body: responseText
     };
   }
 
@@ -168,7 +132,153 @@ async function createSession() {
   return payload;
 }
 
-async function initCheckout() {
+function base64EncodeObject(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  return btoa(binary);
+}
+
+function amountForApplePay(amount) {
+  return (amount.value / 100).toFixed(2);
+}
+
+function mapNetwork(brand) {
+  const networks = {
+    amex: "amex",
+    discover: "discover",
+    mc: "masterCard",
+    visa: "visa"
+  };
+
+  return networks[brand] || brand;
+}
+
+function supportedNetworks() {
+  const brands = applePayPaymentMethod?.brands || ["visa", "mc", "amex"];
+  return [...new Set(brands.map(mapNetwork))];
+}
+
+async function loadPaymentMethods() {
+  const response = await api("/paymentMethods", {
+    amount: { currency: "BRL", value: 10000 },
+    countryCode: "BR"
+  });
+
+  checkoutConfig = response.config;
+  applePayPaymentMethod = response.adyenResponse.paymentMethods?.find(
+    paymentMethod => paymentMethod.type === "applepay"
+  );
+
+  if (!applePayPaymentMethod) {
+    throw {
+      error: "Apple Pay nao veio no /paymentMethods.",
+      hint: "Confira se Apple Pay esta habilitado para o merchantAccount na Adyen.",
+      adyenResponse: response.adyenResponse
+    };
+  }
+
+  return response;
+}
+
+async function createApplePayMerchantSession(event) {
+  const applePayConfiguration = applePayPaymentMethod.configuration || {};
+
+  if (!applePayConfiguration.merchantId || !applePayConfiguration.merchantName) {
+    throw {
+      error: "A Adyen nao retornou merchantId/merchantName para Apple Pay.",
+      paymentMethod: applePayPaymentMethod
+    };
+  }
+
+  const response = await api("/apple-pay-session", {
+    validationURL: event.validationURL,
+    displayName: applePayConfiguration.merchantName,
+    domainName: window.location.hostname,
+    merchantIdentifier: applePayConfiguration.merchantId
+  });
+
+  return response.applePaySession;
+}
+
+async function makePayment(event) {
+  const applePayToken = base64EncodeObject(event.payment.token.paymentData);
+
+  return api("/payments", {
+    amount: checkoutConfig.amount,
+    reference: `APPLEPAY-API-${Date.now()}`,
+    returnUrl: `${API_BASE_URL}/return`,
+    applePayToken
+  });
+}
+
+function startApplePay() {
+  const applePayConfiguration = applePayPaymentMethod.configuration || {};
+  const request = {
+    countryCode: checkoutConfig.countryCode,
+    currencyCode: checkoutConfig.amount.currency,
+    merchantCapabilities: ["supports3DS"],
+    supportedNetworks: supportedNetworks(),
+    total: {
+      label: applePayConfiguration.merchantName || "Enjupay",
+      amount: amountForApplePay(checkoutConfig.amount),
+      type: "final"
+    }
+  };
+
+  log({ request, applePayPaymentMethod, checkoutConfig }, "Abrindo Apple Pay");
+
+  const session = new ApplePaySession(3, request);
+
+  session.onvalidatemerchant = async event => {
+    try {
+      showStatus("Validando merchant Apple Pay...", "info");
+      const merchantSession = await createApplePayMerchantSession(event);
+      session.completeMerchantValidation(merchantSession);
+      log({ merchantSession }, "Merchant Apple Pay validado");
+    } catch (error) {
+      showStatus("Falha na validacao merchant Apple Pay", "error");
+      log(error, "Erro validacao merchant");
+      session.abort();
+    }
+  };
+
+  session.onpaymentauthorized = async event => {
+    try {
+      showStatus("Enviando pagamento para Adyen...", "info");
+      const paymentResponse = await makePayment(event);
+      const resultCode = paymentResponse.payment?.resultCode;
+      const success = resultCode === "Authorised";
+
+      session.completePayment(
+        success
+          ? ApplePaySession.STATUS_SUCCESS
+          : ApplePaySession.STATUS_FAILURE
+      );
+
+      showStatus(`Pagamento ${success ? "concluido" : "falhou"}: ${resultCode}`, success ? "success" : "error");
+      log(paymentResponse, "Resposta /payments");
+    } catch (error) {
+      session.completePayment(ApplePaySession.STATUS_FAILURE);
+      showStatus("Falha ao processar pagamento", "error");
+      log(error, "Erro /payments");
+    }
+  };
+
+  session.oncancel = event => {
+    showStatus("Apple Pay cancelado", "info");
+    log({ eventType: event.type }, "Apple Pay cancelado");
+  };
+
+  session.begin();
+}
+
+async function init() {
   if (window.location.protocol === "file:") {
     showStatus("Abra a pagina pela URL do servidor", "error");
     log("Nao abra o apple.html direto como arquivo. Use a URL HTTPS do Render.");
@@ -181,87 +291,34 @@ async function initCheckout() {
     return;
   }
 
+  if (!window.ApplePaySession) {
+    showStatus("Apple Pay JS nao esta disponivel neste navegador", "error");
+    log("Teste no Safari com Apple Pay configurado.");
+    return;
+  }
+
   try {
-    showStatus("Criando sessao Adyen...", "info");
+    showStatus("Buscando metodos de pagamento...", "info");
+    const paymentMethodsResponse = await loadPaymentMethods();
 
-    const { AdyenCheckout, Dropin } = window.AdyenWeb;
-    const { session, config, adyenResponse } = await createSession();
-
-    if (!config.clientKey) {
-      throw { error: "ADYEN_CLIENT_KEY nao configurado no servidor." };
+    if (!ApplePaySession.canMakePayments()) {
+      showStatus("Apple Pay indisponivel neste dispositivo", "error");
+      log(paymentMethodsResponse, "Apple Pay indisponivel");
+      return;
     }
 
-    log({ session, config, adyenResponse }, "Sessao criada");
+    document.getElementById("apple-pay-button").style.display = "block";
+    document.getElementById("apple-pay-button").addEventListener("click", startApplePay);
 
-    if (!config.applePayDomainName || !config.applePayDomainAssociationFilePresent) {
-      showStatus(
-        "Apple Pay carregou, mas o clique pode falhar sem dominio validado.",
-        "info"
-      );
-      log({
-        origin: window.location.origin,
-        applePayDomainName: config.applePayDomainName || null,
-        applePayDomainAssociationFilePresent: config.applePayDomainAssociationFilePresent,
-        nextSteps: [
-          "Configure ADYEN_APPLE_PAY_DOMAIN_NAME com o dominio onrender.com sem https://.",
-          "Configure PUBLIC_BASE_URL com a URL HTTPS completa do Render.",
-          "Coloque o arquivo apple-developer-merchantid-domain-association na raiz do projeto.",
-          "Cadastre o dominio na Adyen e em Allowed origins."
-        ]
-      }, "Aviso Apple Pay");
-    }
-
-    const applePayConfiguration = {
-      buttonType: "buy",
-      buttonColor: "black"
-    };
-
-    const checkout = await AdyenCheckout({
-      session,
-      environment: config.environment,
-      clientKey: config.clientKey,
-      amount: config.amount,
-      countryCode: config.countryCode,
-      locale: config.locale,
-
-      onPaymentCompleted: (result, component) => {
-        showStatus(`Pagamento concluido: ${result.resultCode}`, "success");
-        log({ result, componentType: component?.type }, "Pagamento concluido");
-      },
-
-      onPaymentFailed: (result, component) => {
-        showStatus(`Pagamento falhou: ${result.resultCode}`, "error");
-        log({ result, componentType: component?.type }, "Pagamento falhou");
-      },
-
-      onError: (error, component) => {
-        showStatus(adyenErrorMessage(error), "error");
-        log({
-          name: error.name,
-          message: error.message,
-          stack: error.stack,
-          componentType: component?.type
-        }, "Erro Drop-in");
-      }
-    });
-
-    new Dropin(checkout, {
-      instantPaymentTypes: ["applepay"],
-      openFirstPaymentMethod: true,
-      paymentMethodsConfiguration: {
-        applepay: applePayConfiguration
-      }
-    }).mount("#dropin-container");
-
-    showStatus("Drop-in carregado", "success");
-
+    showStatus("Apple Pay pronto", "success");
+    log(paymentMethodsResponse, "Resposta /paymentMethods");
   } catch (error) {
-    showStatus(adyenErrorMessage(error), "error");
+    showStatus(error.error || error.message || "Erro ao inicializar", "error");
     log(error, "Erro inicializacao");
   }
 }
 
-window.addEventListener("DOMContentLoaded", initCheckout);
+window.addEventListener("DOMContentLoaded", init);
 </script>
 
 </body>
