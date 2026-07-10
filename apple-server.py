@@ -23,6 +23,9 @@ COUNTRY_CODE = os.getenv("ADYEN_COUNTRY_CODE", "BR")
 SHOPPER_LOCALE = os.getenv("ADYEN_SHOPPER_LOCALE", "pt-BR")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 APPLE_PAY_DOMAIN_NAME = os.getenv("ADYEN_APPLE_PAY_DOMAIN_NAME", "")
+APPLE_PAY_MERCHANT_ID_AS_INT = os.getenv(
+    "ADYEN_APPLE_PAY_MERCHANT_ID_AS_INT", "true"
+).lower() not in ("0", "false", "no")
 
 PORT = int(os.getenv("PORT", "3001"))
 HTTPS_CERT_FILE = os.getenv("HTTPS_CERT_FILE", "localhost.pem")
@@ -229,11 +232,15 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _apple_pay_session(self, data):
+        merchant_identifier = data["merchantIdentifier"]
+        if APPLE_PAY_MERCHANT_ID_AS_INT and str(merchant_identifier).isdigit():
+            merchant_identifier = int(merchant_identifier)
+
         payload = {
             "displayName": data["displayName"],
             "domainName": data.get("domainName")
             or clean_domain_name(APPLE_PAY_DOMAIN_NAME),
-            "merchantIdentifier": data["merchantIdentifier"],
+            "merchantIdentifier": merchant_identifier,
         }
 
         adyen_response = self._adyen_request("v64", "/applePay/sessions", payload)
