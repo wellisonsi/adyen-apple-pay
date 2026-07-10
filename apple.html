@@ -247,6 +247,16 @@ function startApplePay() {
 
   const session = new ApplePaySession(3, request);
 
+  session.onpaymentmethodselected = event => {
+    appendLog("Metodo Apple Pay selecionado", {
+      paymentMethod: event.paymentMethod
+    });
+
+    session.completePaymentMethodSelection({
+      newTotal: request.total
+    });
+  };
+
   session.onvalidatemerchant = async event => {
     try {
       showStatus("Validando merchant Apple Pay...", "info");
@@ -262,6 +272,10 @@ function startApplePay() {
 
   session.onpaymentauthorized = async event => {
     try {
+      appendLog("Apple Pay autorizado", {
+        payment: event.payment
+      });
+
       showStatus("Enviando pagamento para Adyen...", "info");
       const paymentResponse = await makePayment(event);
       const resultCode = paymentResponse.payment?.resultCode;
@@ -284,7 +298,10 @@ function startApplePay() {
 
   session.oncancel = event => {
     showStatus("Apple Pay cancelado", "info");
-    appendLog("Apple Pay cancelado", { eventType: event.type });
+    appendLog("Apple Pay cancelado", {
+      eventType: event.type,
+      note: "Se nao houver evento 'Apple Pay autorizado' antes deste, o Safari cancelou antes de entregar o token ao JavaScript."
+    });
   };
 
   session.begin();
