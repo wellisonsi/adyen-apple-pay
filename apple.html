@@ -89,6 +89,7 @@ const API_BASE_URL = window.location.origin;
 
 let checkoutConfig = null;
 let applePayPaymentMethod = null;
+const apiHistory = [];
 
 function showStatus(message, type = "info") {
   const el = document.getElementById("status");
@@ -101,6 +102,15 @@ function log(data, title = "") {
   const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
   document.getElementById("result").textContent = prefix + text;
   console.log(title || "LOG:", data);
+}
+
+function appendLog(title, data) {
+  apiHistory.push({
+    title,
+    data,
+    at: new Date().toISOString()
+  });
+  log(apiHistory, "Historico API");
 }
 
 async function api(path, body) {
@@ -126,9 +136,11 @@ async function api(path, body) {
   }
 
   if (!response.ok) {
+    appendLog(`Erro ${path}`, payload);
     throw payload;
   }
 
+  appendLog(`Resposta ${path}`, payload);
   return payload;
 }
 
@@ -231,7 +243,7 @@ function startApplePay() {
     }
   };
 
-  log({ request, applePayPaymentMethod, checkoutConfig }, "Abrindo Apple Pay");
+  appendLog("Abrindo Apple Pay", { request, applePayPaymentMethod, checkoutConfig });
 
   const session = new ApplePaySession(3, request);
 
@@ -240,10 +252,10 @@ function startApplePay() {
       showStatus("Validando merchant Apple Pay...", "info");
       const merchantSession = await createApplePayMerchantSession(event);
       session.completeMerchantValidation(merchantSession);
-      log({ merchantSession }, "Merchant Apple Pay validado");
+      appendLog("Merchant Apple Pay validado", { merchantSession });
     } catch (error) {
       showStatus("Falha na validacao merchant Apple Pay", "error");
-      log(error, "Erro validacao merchant");
+      appendLog("Erro validacao merchant", error);
       session.abort();
     }
   };
@@ -262,17 +274,17 @@ function startApplePay() {
       );
 
       showStatus(`Pagamento ${success ? "concluido" : "falhou"}: ${resultCode}`, success ? "success" : "error");
-      log(paymentResponse, "Resposta /payments");
+      appendLog("Pagamento finalizado", paymentResponse);
     } catch (error) {
       session.completePayment(ApplePaySession.STATUS_FAILURE);
       showStatus("Falha ao processar pagamento", "error");
-      log(error, "Erro /payments");
+      appendLog("Erro /payments", error);
     }
   };
 
   session.oncancel = event => {
     showStatus("Apple Pay cancelado", "info");
-    log({ eventType: event.type }, "Apple Pay cancelado");
+    appendLog("Apple Pay cancelado", { eventType: event.type });
   };
 
   session.begin();
@@ -303,7 +315,7 @@ async function init() {
 
     if (!ApplePaySession.canMakePayments()) {
       showStatus("Apple Pay indisponivel neste dispositivo", "error");
-      log(paymentMethodsResponse, "Apple Pay indisponivel");
+      appendLog("Apple Pay indisponivel", paymentMethodsResponse);
       return;
     }
 
@@ -311,10 +323,10 @@ async function init() {
     document.getElementById("apple-pay-button").addEventListener("click", startApplePay);
 
     showStatus("Apple Pay pronto", "success");
-    log(paymentMethodsResponse, "Resposta /paymentMethods");
+    appendLog("Apple Pay pronto", paymentMethodsResponse);
   } catch (error) {
     showStatus(error.error || error.message || "Erro ao inicializar", "error");
-    log(error, "Erro inicializacao");
+    appendLog("Erro inicializacao", error);
   }
 }
 

@@ -23,9 +23,6 @@ COUNTRY_CODE = os.getenv("ADYEN_COUNTRY_CODE", "BR")
 SHOPPER_LOCALE = os.getenv("ADYEN_SHOPPER_LOCALE", "pt-BR")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 APPLE_PAY_DOMAIN_NAME = os.getenv("ADYEN_APPLE_PAY_DOMAIN_NAME", "")
-APPLE_PAY_MERCHANT_ID_AS_INT = os.getenv(
-    "ADYEN_APPLE_PAY_MERCHANT_ID_AS_INT", "true"
-).lower() not in ("0", "false", "no")
 
 PORT = int(os.getenv("PORT", "3001"))
 HTTPS_CERT_FILE = os.getenv("HTTPS_CERT_FILE", "localhost.pem")
@@ -132,14 +129,6 @@ class Handler(BaseHTTPRequestHandler):
 
             self._json(404, {"error": "Not found"})
 
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8")
-            print("ERRO ADYEN:")
-            print(error_body)
-
-            self._headers(e.code)
-            self.wfile.write(error_body.encode("utf-8"))
-
         except Exception as e:
             print("ERRO BACKEND:")
             print(str(e))
@@ -191,23 +180,64 @@ class Handler(BaseHTTPRequestHandler):
         if not ADYEN_API_KEY:
             raise RuntimeError("ADYEN_API_KEY is required.")
 
+        url = f"https://checkout-test.adyen.com/{version}{path}"
         headers = {
             "Content-Type": "application/json",
             "X-API-Key": ADYEN_API_KEY,
         }
+        debug_headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": "[REDACTED]",
+        }
 
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
+            debug_headers["Idempotency-Key"] = idempotency_key
 
         request = urllib.request.Request(
-            f"https://checkout-test.adyen.com/{version}{path}",
+            url,
             data=json_bytes(payload),
             headers=headers,
             method="POST",
         )
 
-        with urllib.request.urlopen(request) as response:
-            return json.loads(response.read().decode("utf-8"))
+        debug = {
+            "request": {
+                "method": "POST",
+                "url": url,
+                "headers": debug_headers,
+                "body": payload,
+            }
+        }
+
+        try:
+            with urllib.request.urlopen(request) as response:
+                response_body = response.read().decode("utf-8")
+                response_payload = json.loads(response_body) if response_body else {}
+                debug["response"] = {
+                    "status": response.status,
+                    "headers": dict(response.headers.items()),
+                    "body": response_payload,
+                }
+                return response_payload, debug
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8")
+            try:
+                error_payload = json.loads(error_body) if error_body else {}
+            except json.JSONDecodeError:
+                error_payload = {"rawBody": error_body}
+
+            debug["response"] = {
+                "status": e.code,
+                "headers": dict(e.headers.items()),
+                "body": error_payload,
+            }
+
+            print("ERRO ADYEN:")
+            print(json.dumps(debug, indent=2))
+
+            self._json(e.code, {"adyenError": error_payload, "debug": debug})
+            return None, debug
 
     def _payment_methods(self, data):
         payload = {
@@ -221,29 +251,31 @@ class Handler(BaseHTTPRequestHandler):
             "channel": "Web",
         }
 
-        payment_methods = self._adyen_request("v72", "/paymentMethods", payload)
+        payment_methods, debug = self._adyen_request("v72", "/paymentMethods", payload)
+        if payment_methods is None:
+            return
 
         self._json(
             200,
             {
                 "config": self._checkout_config(),
                 "adyenResponse": payment_methods,
+                "debug": debug,
             },
         )
 
     def _apple_pay_session(self, data):
-        merchant_identifier = data["merchantIdentifier"]
-        if APPLE_PAY_MERCHANT_ID_AS_INT and str(merchant_identifier).isdigit():
-            merchant_identifier = int(merchant_identifier)
-
         payload = {
             "displayName": data["displayName"],
             "domainName": data.get("domainName")
             or clean_domain_name(APPLE_PAY_DOMAIN_NAME),
-            "merchantIdentifier": merchant_identifier,
+            "merchantIdentifier": data["merchantIdentifier"],
         }
 
-        adyen_response = self._adyen_request("v64", "/applePay/sessions", payload)
+        adyen_response, debug = self._adyen_request("v64", "/applePay/sessions", payload)
+        if adyen_response is None:
+            return
+
         decoded_session = json.loads(
             base64.b64decode(adyen_response["data"]).decode("utf-8")
         )
@@ -254,6 +286,7 @@ class Handler(BaseHTTPRequestHandler):
                 "applePaySession": decoded_session,
                 "config": self._checkout_config(),
                 "adyenResponse": adyen_response,
+                "debug": debug,
             },
         )
 
@@ -274,18 +307,21 @@ class Handler(BaseHTTPRequestHandler):
             "returnUrl": data.get("returnUrl") or f"{public_base_url()}/return",
         }
 
-        payment = self._adyen_request(
+        payment, debug = self._adyen_request(
             "v72",
             "/payments",
             payload,
             idempotency_key=data.get("idempotencyKey") or str(uuid.uuid4()),
         )
+        if payment is None:
+            return
 
         self._json(
             200,
             {
                 "payment": payment,
                 "config": self._checkout_config(),
+                "debug": debug,
             },
         )
 
