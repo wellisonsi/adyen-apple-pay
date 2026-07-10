@@ -23,7 +23,5 @@ services:
         sync: false
       - key: ADYEN_APPLE_PAY_DOMAIN_NAME
         sync: false
-      - key: ADYEN_APPLE_PAY_VALIDATION_DOMAIN
-        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
