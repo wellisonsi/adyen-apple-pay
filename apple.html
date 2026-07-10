@@ -211,7 +211,7 @@ async function createApplePayMerchantSession(event) {
   const response = await api("/apple-pay-session", {
     validationURL: event.validationURL,
     displayName: applePayConfiguration.merchantName,
-    domainName: window.location.hostname,
+    domainName: checkoutConfig.applePayValidationDomain || window.location.hostname,
     merchantIdentifier: applePayConfiguration.merchantId
   });
 

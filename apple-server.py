@@ -23,6 +23,7 @@ COUNTRY_CODE = os.getenv("ADYEN_COUNTRY_CODE", "BR")
 SHOPPER_LOCALE = os.getenv("ADYEN_SHOPPER_LOCALE", "pt-BR")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
 APPLE_PAY_DOMAIN_NAME = os.getenv("ADYEN_APPLE_PAY_DOMAIN_NAME", "")
+APPLE_PAY_VALIDATION_DOMAIN = os.getenv("ADYEN_APPLE_PAY_VALIDATION_DOMAIN", "")
 
 PORT = int(os.getenv("PORT", "3001"))
 HTTPS_CERT_FILE = os.getenv("HTTPS_CERT_FILE", "localhost.pem")
@@ -165,6 +166,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "environment": "test",
             "applePayDomainName": clean_domain_name(APPLE_PAY_DOMAIN_NAME),
+            "applePayValidationDomain": clean_domain_name(APPLE_PAY_VALIDATION_DOMAIN),
             "applePayDomainAssociationFilePresent": os.path.exists(
                 file_path(APPLE_PAY_DOMAIN_ASSOCIATION_FILE)
             ),
