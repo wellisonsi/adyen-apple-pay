@@ -298,12 +298,20 @@ class Handler(BaseHTTPRequestHandler):
 
         payload = {
             "merchantAccount": MERCHANT_ACCOUNT,
-            "reference": data.get("reference", f"APPLEPAY-API-{int(time.time())}"),
-            "amount": amount,
+            "reference": data.get(
+                "reference",
+                f"APPLEPAY-API-{int(time.time())}",
+            ),
+            "amount": {
+                "currency": "BRL",
+                "value": amount_in_cents,
+            },
             "paymentMethod": {
                 "type": "applepay",
                 "applePayToken": data["applePayToken"],
             },
+            "shopperReference": "06651787438",
+            "shopperInteraction": "Ecommerce",
             "storePaymentMethod": True,
             "recurringProcessingModel": "Subscription",
             "returnUrl": data.get("returnUrl") or f"{public_base_url()}/return",
