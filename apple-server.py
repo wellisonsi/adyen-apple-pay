@@ -304,6 +304,8 @@ class Handler(BaseHTTPRequestHandler):
                 "type": "applepay",
                 "applePayToken": data["applePayToken"],
             },
+            "storePaymentMethod": true,
+            "recurringProcessingModel": "Subscription",
             "returnUrl": data.get("returnUrl") or f"{public_base_url()}/return",
         }
 
