@@ -304,12 +304,12 @@ class Handler(BaseHTTPRequestHandler):
             ),
             "amount": amount,
             "paymentMethod": {
-                "type": "applepay",
-                "applePayToken": data["applePayToken"],
+                "storedPaymentMethodId": "JPCN9QLGJFL2DTT5"
             },
             "shopperReference": "06651787438",
-            "shopperInteraction": "Ecommerce",
+            # "shopperInteraction": "Ecommerce",
             "storePaymentMethod": True,
+            "shopperInteraction": "ContAuth",
             "recurringProcessingModel": "Subscription",
             "returnUrl": data.get("returnUrl") or f"{public_base_url()}/return",
         }
