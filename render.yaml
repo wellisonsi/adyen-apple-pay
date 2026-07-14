@@ -14,7 +14,7 @@ services:
       - key: ADYEN_AMOUNT_CURRENCY
         value: BRL
       - key: ADYEN_AMOUNT_VALUE
-        value: "10000"
+        value: "12000"
       - key: ADYEN_COUNTRY_CODE
         value: BR
       - key: ADYEN_SHOPPER_LOCALE
