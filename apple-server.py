@@ -18,7 +18,7 @@ ADYEN_API_KEY = os.getenv("ADYEN_API_KEY", "")
 MERCHANT_ACCOUNT = os.getenv("ADYEN_MERCHANT_ACCOUNT", "ENJOEIBR")
 
 AMOUNT_CURRENCY = os.getenv("ADYEN_AMOUNT_CURRENCY", "BRL")
-AMOUNT_VALUE = int(os.getenv("ADYEN_AMOUNT_VALUE", "12000"))
+AMOUNT_VALUE = int(os.getenv("ADYEN_AMOUNT_VALUE", "10000"))
 COUNTRY_CODE = os.getenv("ADYEN_COUNTRY_CODE", "BR")
 SHOPPER_LOCALE = os.getenv("ADYEN_SHOPPER_LOCALE", "pt-BR")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "")
@@ -302,17 +302,14 @@ class Handler(BaseHTTPRequestHandler):
                 "reference",
                 f"APPLEPAY-API-{int(time.time())}",
             ),
-            "amount": {
-                "currency": "BRL",
-                "value": amount_in_cents,
-            },
+            "amount": amount,
             "paymentMethod": {
-                "storedPaymentMethodId": "JPCN9QLGJFL2DTT5"
+                "type": "applepay",
+                "applePayToken": data["applePayToken"],
             },
             "shopperReference": "06651787438",
-            # "shopperInteraction": "Ecommerce",
+            "shopperInteraction": "Ecommerce",
             "storePaymentMethod": True,
-            "shopperInteraction": "ContAuth",
             "recurringProcessingModel": "Subscription",
             "returnUrl": data.get("returnUrl") or f"{public_base_url()}/return",
         }
