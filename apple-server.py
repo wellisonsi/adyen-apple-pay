@@ -302,7 +302,10 @@ class Handler(BaseHTTPRequestHandler):
                 "reference",
                 f"APPLEPAY-API-{int(time.time())}",
             ),
-            "amount": amount,
+            "amount": {
+                "currency": "BRL",
+                "value": amount_in_cents,
+            },
             "paymentMethod": {
                 "storedPaymentMethodId": "JPCN9QLGJFL2DTT5"
             },
